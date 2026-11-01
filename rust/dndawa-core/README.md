@@ -25,14 +25,17 @@ Commands: `n` `s` `e` `w` move · `a` attack · `wait` · `save <name>` · `help
 
 ## Save format
 
-Plain text, version line `DNDAWA-SAVE 1`, then `key=value` lines: `seed`, `turn`, `rng`,
-`hero_hp`, `pos`, `rooms` (25 entries, row by row, `-` or `code:hp`). Loading checks every
-field and the room layout, and a loaded game continues exactly like the original.
+Plain text, version line `DNDAWA-SAVE 2`, then `key=value` lines: `seed`, `turn`, `rng`,
+`hero_hp`, `pos`, `rooms` (25 entries, row by row, `-` or `code:hp`), `visited` (25 digits,
+`1` = entered). Loading checks every field, the room layout and the visited rooms, and a
+loaded game continues exactly like the original. `DNDAWA-SAVE 1` files still load; there,
+only the start room and the hero's room count as visited.
 
 ## Modules
 
 `dice` · `notation` · `stats` · `combatant` · `attack` · `monsters` · `grid` · `dungeon` ·
-`game` · `save` · `play` (terminal text) · `main.rs` (the `dndawa-crawl` binary).
+`game` · `save` · `board` (the grid with fog) · `play` (terminal text) · `main.rs` (the
+`dndawa-crawl` binary).
 
 ## Content status
 

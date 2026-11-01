@@ -5,7 +5,7 @@ use crate::attack::{AttackOutcome, attack};
 use crate::combatant::Combatant;
 use crate::dice::Rng;
 use crate::dungeon::{self, Dungeon};
-use crate::grid::{Direction, MoveError, Position};
+use crate::grid::{Direction, MoveError, Position, ROOMS};
 use crate::monsters::MonsterKind;
 use crate::{Action, ActionError, GameState, apply_action};
 
@@ -82,6 +82,8 @@ pub struct Game {
     pub(crate) position: Position,
     pub(crate) dungeon: Dungeon,
     pub(crate) rng: Rng,
+    /// Rooms the hero has entered, row by row (the start room counts).
+    pub(crate) visited: [bool; ROOMS],
 }
 
 /// The hero's statblock (HOMEBREW, level-1 fighter style).
@@ -99,6 +101,8 @@ impl Game {
             turn: 0,
             player_health: i32::try_from(hero.hp()).unwrap_or(i32::MAX),
         };
+        let mut visited = [false; ROOMS];
+        visited[dungeon::index(dungeon::start())] = true;
         Self {
             seed,
             state,
@@ -106,6 +110,7 @@ impl Game {
             position: dungeon::start(),
             dungeon,
             rng,
+            visited,
         }
     }
 
@@ -127,6 +132,11 @@ impl Game {
 
     pub fn dungeon(&self) -> &Dungeon {
         &self.dungeon
+    }
+
+    /// Has the hero ever entered this room?
+    pub fn visited(&self, at: Position) -> bool {
+        self.visited[dungeon::index(at)]
     }
 
     /// Won once the boss room is empty, lost once the hero has 0 HP.
@@ -157,6 +167,7 @@ impl Game {
                 let to = self.position.step(direction).map_err(GameError::Move)?;
                 self.advance_turn()?;
                 self.position = to;
+                self.visited[dungeon::index(to)] = true;
                 Ok(Event::Moved {
                     to,
                     foe: self.dungeon.foe(to).map(|foe| foe.kind),
@@ -224,6 +235,20 @@ mod tests {
         let event = game.apply(GameAction::Move(Direction::East)).unwrap();
         assert!(matches!(event, Event::Moved { .. }));
         assert_eq!(game.turn(), 2);
+    }
+
+    #[test]
+    fn rooms_are_marked_visited_when_entered() {
+        let mut game = Game::new(5);
+        let east = dungeon::start().step(Direction::East).unwrap();
+        assert!(game.visited(dungeon::start()));
+        assert!(!game.visited(east));
+        assert!(!game.visited(dungeon::boss_room()));
+        game.apply(GameAction::Move(Direction::East)).unwrap();
+        assert!(game.visited(east));
+        let before = game.clone();
+        let _ = game.apply(GameAction::Move(Direction::North));
+        assert_eq!(game, before, "a refused move marks nothing");
     }
 
     #[test]

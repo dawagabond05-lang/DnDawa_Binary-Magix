@@ -1,24 +1,31 @@
 //! Save files: a small versioned text format, one `key=value` per line.
 //!
 //! ```text
-//! DNDAWA-SAVE 1
+//! DNDAWA-SAVE 2
 //! seed=5
 //! turn=3
 //! rng=1234567890
 //! hero_hp=10
 //! pos=1,0
 //! rooms=-,rat:7,-,...   (25 entries, row by row; "-" is an empty room)
+//! visited=1100000000...  (25 digits, row by row; 1 = the hero has been there)
 //! ```
+//!
+//! Version 1 saves (no `visited` line) still load: the start room and the hero's room
+//! count as visited.
 
 use crate::GameState;
 use crate::dice::Rng;
 use crate::dungeon::{self, Dungeon, Foe};
 use crate::game::{Game, new_hero};
-use crate::grid::{Position, SIZE};
+use crate::grid::{Position, ROOMS};
 use crate::monsters::MonsterKind;
 
-/// First line of every save file. Bump the number when the format changes.
-pub const HEADER: &str = "DNDAWA-SAVE 1";
+/// First line of every save file written now. Bump the number when the format changes.
+pub const HEADER: &str = "DNDAWA-SAVE 2";
+
+/// First line of older saves, still accepted. They have no `visited` line.
+pub const HEADER_V1: &str = "DNDAWA-SAVE 1";
 
 /// Write the game as save-file text. Loading it back gives the same game.
 pub fn to_save_string(game: &Game) -> String {
@@ -31,8 +38,13 @@ pub fn to_save_string(game: &Game) -> String {
             Some(foe) => format!("{}:{}", foe.kind.code(), foe.body.hp()),
         })
         .collect();
+    let visited: String = game
+        .visited
+        .iter()
+        .map(|&seen| if seen { '1' } else { '0' })
+        .collect();
     format!(
-        "{HEADER}\nseed={}\nturn={}\nrng={}\nhero_hp={}\npos={},{}\nrooms={}\n",
+        "{HEADER}\nseed={}\nturn={}\nrng={}\nhero_hp={}\npos={},{}\nrooms={}\nvisited={visited}\n",
         game.seed(),
         game.turn(),
         game.rng.state(),
@@ -46,7 +58,7 @@ pub fn to_save_string(game: &Game) -> String {
 /// Why a save file was refused. Nothing is loaded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadError {
-    /// First line is not [`HEADER`].
+    /// First line is neither [`HEADER`] nor [`HEADER_V1`].
     BadHeader,
     /// A line is not `key=value`, or a key is unknown or repeated.
     BadLine(String),
@@ -61,7 +73,7 @@ pub enum LoadError {
 impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::BadHeader => write!(f, "not a save file (expected {HEADER:?})"),
+            Self::BadHeader => write!(f, "not a save file (expected {HEADER:?} or {HEADER_V1:?})"),
             Self::BadLine(line) => write!(f, "unexpected line: {line:?}"),
             Self::Missing(key) => write!(f, "missing {key}"),
             Self::BadValue(key) => write!(f, "invalid value for {key}"),
@@ -72,20 +84,22 @@ impl std::fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-const KEYS: [&str; 6] = ["seed", "turn", "rng", "hero_hp", "pos", "rooms"];
+const KEYS: [&str; 7] = ["seed", "turn", "rng", "hero_hp", "pos", "rooms", "visited"];
 
 /// Read save-file text back into a game. Every field is checked.
 pub fn from_save_str(text: &str) -> Result<Game, LoadError> {
     let mut lines = text.lines();
-    if lines.next() != Some(HEADER) {
-        return Err(LoadError::BadHeader);
-    }
-    let mut values: [Option<&str>; 6] = [None; 6];
+    let keys: &[&str] = match lines.next() {
+        Some(HEADER) => &KEYS,
+        Some(HEADER_V1) => &KEYS[..6],
+        _ => return Err(LoadError::BadHeader),
+    };
+    let mut values: [Option<&str>; 7] = [None; 7];
     for line in lines.filter(|l| !l.trim().is_empty()) {
         let (key, value) = line
             .split_once('=')
             .ok_or_else(|| LoadError::BadLine(line.to_string()))?;
-        let slot = KEYS
+        let slot = keys
             .iter()
             .position(|k| *k == key)
             .ok_or_else(|| LoadError::BadLine(line.to_string()))?;
@@ -116,10 +130,20 @@ pub fn from_save_str(text: &str) -> Result<Game, LoadError> {
         .split(',')
         .map(parse_room)
         .collect::<Result<Vec<_>, _>>()?;
-    if rooms.len() != usize::from(SIZE) * usize::from(SIZE) {
+    if rooms.len() != ROOMS {
         return Err(LoadError::BadValue("rooms"));
     }
     check_layout(&rooms)?;
+
+    let visited = if keys.len() == KEYS.len() {
+        parse_visited(get(6)?)?
+    } else {
+        let mut seen = [false; ROOMS];
+        seen[dungeon::index(dungeon::start())] = true;
+        seen[dungeon::index(position)] = true;
+        seen
+    };
+    check_visited(&visited, position, &rooms)?;
     let dungeon = Dungeon::from_rooms(rooms).ok_or(LoadError::BadValue("rooms"))?;
 
     Ok(Game {
@@ -132,14 +156,54 @@ pub fn from_save_str(text: &str) -> Result<Game, LoadError> {
         position,
         dungeon,
         rng: Rng::new(rng_state),
+        visited,
     })
+}
+
+/// Exactly 25 digits, `0` or `1`.
+fn parse_visited(value: &str) -> Result<[bool; ROOMS], LoadError> {
+    let mut seen = [false; ROOMS];
+    if value.len() != ROOMS {
+        return Err(LoadError::BadValue("visited"));
+    }
+    for (slot, digit) in seen.iter_mut().zip(value.bytes()) {
+        *slot = match digit {
+            b'0' => false,
+            b'1' => true,
+            _ => return Err(LoadError::BadValue("visited")),
+        };
+    }
+    Ok(seen)
+}
+
+/// The start room and the hero's room were entered, and the hero cannot leave a room
+/// while a foe lives in it, so every other visited room must be empty.
+fn check_visited(
+    visited: &[bool; ROOMS],
+    position: Position,
+    rooms: &[Option<Foe>],
+) -> Result<(), LoadError> {
+    if !visited[dungeon::index(dungeon::start())] {
+        return Err(LoadError::Inconsistent("start room not visited"));
+    }
+    if !visited[dungeon::index(position)] {
+        return Err(LoadError::Inconsistent("hero's room not visited"));
+    }
+    let here = dungeon::index(position);
+    let left_behind = (0..ROOMS).any(|i| i != here && visited[i] && rooms[i].is_some());
+    if left_behind {
+        return Err(LoadError::Inconsistent("a visited room still holds a foe"));
+    }
+    Ok(())
 }
 
 /// Rooms must fit the dungeon's fixed layout: the start room is empty and the boss
 /// is either in its own room or already defeated.
 fn check_layout(rooms: &[Option<Foe>]) -> Result<(), LoadError> {
-    let index = |at: Position| usize::from(at.y()) * usize::from(SIZE) + usize::from(at.x());
-    let (start, boss_room) = (index(dungeon::start()), index(dungeon::boss_room()));
+    let (start, boss_room) = (
+        dungeon::index(dungeon::start()),
+        dungeon::index(dungeon::boss_room()),
+    );
     if rooms[start].is_some() {
         return Err(LoadError::Inconsistent("start room must be empty"));
     }
@@ -173,9 +237,10 @@ fn parse_room(entry: &str) -> Result<Option<Foe>, LoadError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HEADER, LoadError, from_save_str, to_save_string};
+    use super::{HEADER, HEADER_V1, LoadError, from_save_str, to_save_string};
+    use crate::dungeon;
     use crate::game::{Game, GameAction};
-    use crate::grid::Direction;
+    use crate::grid::{Direction, Position};
 
     #[test]
     fn save_has_header_and_every_field() {
@@ -189,6 +254,7 @@ mod tests {
             "hero_hp=12",
             "pos=0,0",
             "rooms=",
+            "visited=1000000000000000000000000",
         ] {
             assert!(lines.iter().any(|l| l.starts_with(key)), "missing {key}");
         }
@@ -246,10 +312,7 @@ mod tests {
         let good = to_save_string(&played(3));
         let bad = |from: &str, to: &str| from_save_str(&good.replacen(from, to, 1));
         assert_eq!(from_save_str("hello"), Err(LoadError::BadHeader));
-        assert_eq!(
-            bad("DNDAWA-SAVE 1", "DNDAWA-SAVE 2"),
-            Err(LoadError::BadHeader)
-        );
+        assert_eq!(bad(HEADER, "DNDAWA-SAVE 9"), Err(LoadError::BadHeader));
         assert_eq!(
             bad("seed=", "sneed="),
             Err(LoadError::BadLine("sneed=3".into()))
@@ -317,6 +380,75 @@ mod tests {
         assert_eq!(
             from_save_str(&with_rooms(&good, &busy_start)),
             Err(LoadError::Inconsistent("start room must be empty"))
+        );
+    }
+
+    fn with_line(good: &str, key: &str, line: Option<&str>) -> String {
+        good.lines()
+            .filter_map(|l| if l.starts_with(key) { line } else { Some(l) })
+            .map(|l| format!("{l}\n"))
+            .collect()
+    }
+
+    #[test]
+    fn version_1_saves_still_load() {
+        let game = played(3);
+        let v2 = to_save_string(&game);
+        let v1 = with_line(&v2, "visited=", None).replacen(HEADER, HEADER_V1, 1);
+        let loaded = from_save_str(&v1).unwrap();
+        assert_eq!(loaded.position(), game.position());
+        for y in 0..5 {
+            for x in 0..5 {
+                let at = Position::new(x, y).unwrap();
+                let expected = at == dungeon::start() || at == game.position();
+                assert_eq!(loaded.visited(at), expected, "room {x},{y}");
+            }
+        }
+        let v1_with_visited = v2.replacen(HEADER, HEADER_V1, 1);
+        assert!(matches!(
+            from_save_str(&v1_with_visited),
+            Err(LoadError::BadLine(_))
+        ));
+    }
+
+    #[test]
+    fn damaged_visited_line_is_refused() {
+        let good = to_save_string(&Game::new(1));
+        let set = |v: &str| from_save_str(&with_line(&good, "visited=", Some(v)));
+        assert_eq!(
+            from_save_str(&with_line(&good, "visited=", None)),
+            Err(LoadError::Missing("visited"))
+        );
+        assert_eq!(set("visited=1"), Err(LoadError::BadValue("visited")));
+        let mut digits = vec!["0"; 25];
+        digits[0] = "1";
+        digits[7] = "x";
+        let line = format!("visited={}", digits.concat());
+        assert_eq!(set(&line), Err(LoadError::BadValue("visited")));
+        assert_eq!(
+            set(&format!("visited={}", "0".repeat(25))),
+            Err(LoadError::Inconsistent("start room not visited"))
+        );
+        assert_eq!(
+            set(&format!("visited={}", "1".repeat(25))),
+            Err(LoadError::Inconsistent("a visited room still holds a foe"))
+        );
+    }
+
+    #[test]
+    fn hero_must_stand_in_a_visited_room() {
+        let good = to_save_string(&Game::new(1));
+        let moved = with_line(&good, "pos=", Some("pos=1,0"));
+        let mut cells = vec!["-"; 25];
+        cells[24] = "boss:45";
+        let quiet = with_line(
+            &moved,
+            "rooms=",
+            Some(&format!("rooms={}", cells.join(","))),
+        );
+        assert_eq!(
+            from_save_str(&quiet),
+            Err(LoadError::Inconsistent("hero's room not visited"))
         );
     }
 

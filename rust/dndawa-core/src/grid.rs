@@ -3,6 +3,9 @@
 /// Rooms per side.
 pub const SIZE: u8 = 5;
 
+/// Rooms in the whole grid.
+pub const ROOMS: usize = SIZE as usize * SIZE as usize;
+
 /// A room coordinate, always inside the grid (`x` east, `y` south, both `0..SIZE`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {

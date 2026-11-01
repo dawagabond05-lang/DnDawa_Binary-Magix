@@ -30,7 +30,8 @@ pub fn boss_room() -> Position {
     Position::new(SIZE - 1, SIZE - 1).expect("inside grid")
 }
 
-fn index(at: Position) -> usize {
+/// Row-by-row index of a room, `0..ROOMS`.
+pub(crate) fn index(at: Position) -> usize {
     usize::from(at.y()) * usize::from(SIZE) + usize::from(at.x())
 }
 
