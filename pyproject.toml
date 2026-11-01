@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dndawa"
+version = "0.1.0"
+description = "DnDawa_Binary-Magix: a turn-based terminal dungeon crawler (work in progress)."
+requires-python = ">=3.11"
+authors = [{ name = "Dawa" }]
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Environment :: Console",
+    "Topic :: Games/Entertainment :: Role-Playing",
+    "Private :: Do Not Upload",
+]
+
+[project.scripts]
+dndawa = "dndawa.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
