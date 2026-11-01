@@ -20,7 +20,8 @@ fn main() -> ExitCode {
     };
     println!("DnDawa_Binary-Magix · seed {}", game.seed());
     println!("{}", play::HELP);
-    show(&game, None);
+    let mut journal = play::Journal::default();
+    show(&game, &journal);
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
@@ -44,7 +45,8 @@ fn main() -> ExitCode {
             Some(Command::Quit) => break,
             None => format!("Unknown command. {}", play::HELP),
         };
-        show(&game, Some(&message));
+        journal.push(message);
+        show(&game, &journal);
         let _ = io::stdout().flush();
         if game.status() != GameStatus::InProgress {
             break;
@@ -53,13 +55,13 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Print the screen, then what just happened, then the status line.
-fn show(game: &Game, message: Option<&str>) {
+/// Print the screen, then the journal (last lines, newest last), then the status line.
+fn show(game: &Game, journal: &play::Journal) {
     for line in play::screen(game) {
         println!("{line}");
     }
-    if let Some(message) = message {
-        println!("{message}");
+    for line in journal.lines() {
+        println!("{line}");
     }
     println!("{}", play::status_line(game));
 }

@@ -126,6 +126,39 @@ pub fn status_line(game: &Game) -> String {
     )
 }
 
+/// Lines kept in the journal shown under the screen.
+pub const JOURNAL_LINES: usize = 3;
+
+/// The last few things that happened, oldest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Journal {
+    lines: std::collections::VecDeque<String>,
+}
+
+impl Journal {
+    /// Add a line, forgetting the oldest beyond [`JOURNAL_LINES`].
+    pub fn push(&mut self, line: impl Into<String>) {
+        self.lines.push_back(line.into());
+        while self.lines.len() > JOURNAL_LINES {
+            self.lines.pop_front();
+        }
+    }
+
+    /// Lines to print: older ones marked `·`, the newest marked `»`; each at most 95
+    /// characters.
+    pub fn lines(&self) -> Vec<String> {
+        let last = self.lines.len().saturating_sub(1);
+        self.lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let mark = if i == last { "»" } else { "·" };
+                format!("{mark} {line}").chars().take(95).collect()
+            })
+            .collect()
+    }
+}
+
 /// Key to the board tokens.
 pub const LEGEND: &str = "@ you · ? fog · · empty · B boss · r s g foes";
 
@@ -156,7 +189,7 @@ pub fn screen(game: &Game) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, describe, parse_command, save_path, screen, status_line};
+    use super::{Command, Journal, describe, parse_command, save_path, screen, status_line};
     use crate::dungeon;
     use crate::game::{Event, Game, GameAction};
     use crate::grid::Direction;
@@ -214,6 +247,20 @@ mod tests {
             }
         }
         assert!(describe(&Event::Waited).len() <= 95);
+    }
+
+    #[test]
+    fn journal_keeps_the_last_three_lines_newest_last() {
+        let mut journal = Journal::default();
+        assert!(journal.lines().is_empty());
+        journal.push("one");
+        assert_eq!(journal.lines(), ["» one"]);
+        for line in ["two", "three", "four"] {
+            journal.push(line);
+        }
+        assert_eq!(journal.lines(), ["· two", "· three", "» four"]);
+        journal.push("x".repeat(200));
+        assert_eq!(journal.lines()[2].chars().count(), 95);
     }
 
     #[test]
