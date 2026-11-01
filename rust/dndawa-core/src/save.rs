@@ -10,7 +10,12 @@
 //! rooms=-,rat:7,-,...   (25 entries, row by row; "-" is an empty room)
 //! ```
 
-use crate::game::Game;
+use crate::GameState;
+use crate::dice::Rng;
+use crate::dungeon::{Dungeon, Foe};
+use crate::game::{Game, new_hero};
+use crate::grid::{Position, SIZE};
+use crate::monsters::MonsterKind;
 
 /// First line of every save file. Bump the number when the format changes.
 pub const HEADER: &str = "DNDAWA-SAVE 1";
@@ -38,9 +43,113 @@ pub fn to_save_string(game: &Game) -> String {
     )
 }
 
+/// Why a save file was refused. Nothing is loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadError {
+    /// First line is not [`HEADER`].
+    BadHeader,
+    /// A line is not `key=value`, or a key is unknown or repeated.
+    BadLine(String),
+    /// A required key is missing.
+    Missing(&'static str),
+    /// A value is malformed or out of range.
+    BadValue(&'static str),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BadHeader => write!(f, "not a save file (expected {HEADER:?})"),
+            Self::BadLine(line) => write!(f, "unexpected line: {line:?}"),
+            Self::Missing(key) => write!(f, "missing {key}"),
+            Self::BadValue(key) => write!(f, "invalid value for {key}"),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+const KEYS: [&str; 6] = ["seed", "turn", "rng", "hero_hp", "pos", "rooms"];
+
+/// Read save-file text back into a game. Every field is checked.
+pub fn from_save_str(text: &str) -> Result<Game, LoadError> {
+    let mut lines = text.lines();
+    if lines.next() != Some(HEADER) {
+        return Err(LoadError::BadHeader);
+    }
+    let mut values: [Option<&str>; 6] = [None; 6];
+    for line in lines.filter(|l| !l.trim().is_empty()) {
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| LoadError::BadLine(line.to_string()))?;
+        let slot = KEYS
+            .iter()
+            .position(|k| *k == key)
+            .ok_or_else(|| LoadError::BadLine(line.to_string()))?;
+        if values[slot].replace(value).is_some() {
+            return Err(LoadError::BadLine(line.to_string()));
+        }
+    }
+    let get = |i: usize| values[i].ok_or(LoadError::Missing(KEYS[i]));
+    let number = |i: usize| -> Result<u64, LoadError> {
+        get(i)?.parse().map_err(|_| LoadError::BadValue(KEYS[i]))
+    };
+    let seed = number(0)?;
+    let turn = number(1)?;
+    let rng_state = number(2)?;
+
+    let mut hero = new_hero();
+    let hero_hp = u32::try_from(number(3)?).map_err(|_| LoadError::BadValue("hero_hp"))?;
+    if hero_hp > hero.max_hp() {
+        return Err(LoadError::BadValue("hero_hp"));
+    }
+    hero.set_hp(hero_hp);
+
+    let (x, y) = get(4)?.split_once(',').ok_or(LoadError::BadValue("pos"))?;
+    let coord = |v: &str| v.parse::<u8>().map_err(|_| LoadError::BadValue("pos"));
+    let position = Position::new(coord(x)?, coord(y)?).ok_or(LoadError::BadValue("pos"))?;
+
+    let rooms = get(5)?
+        .split(',')
+        .map(parse_room)
+        .collect::<Result<Vec<_>, _>>()?;
+    if rooms.len() != usize::from(SIZE) * usize::from(SIZE) {
+        return Err(LoadError::BadValue("rooms"));
+    }
+    let dungeon = Dungeon::from_rooms(rooms).ok_or(LoadError::BadValue("rooms"))?;
+
+    Ok(Game {
+        seed,
+        state: GameState {
+            turn,
+            player_health: i32::try_from(hero.hp()).unwrap_or(i32::MAX),
+        },
+        hero,
+        position,
+        dungeon,
+        rng: Rng::new(rng_state),
+    })
+}
+
+/// `-` for an empty room, or `code:hp` with 1 <= hp <= that monster's max HP.
+fn parse_room(entry: &str) -> Result<Option<Foe>, LoadError> {
+    if entry == "-" {
+        return Ok(None);
+    }
+    let (code, hp) = entry.split_once(':').ok_or(LoadError::BadValue("rooms"))?;
+    let kind = MonsterKind::from_code(code).ok_or(LoadError::BadValue("rooms"))?;
+    let hp: u32 = hp.parse().map_err(|_| LoadError::BadValue("rooms"))?;
+    let mut body = kind.spawn();
+    if hp == 0 || hp > body.max_hp() {
+        return Err(LoadError::BadValue("rooms"));
+    }
+    body.set_hp(hp);
+    Ok(Some(Foe { kind, body }))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HEADER, to_save_string};
+    use super::{HEADER, LoadError, from_save_str, to_save_string};
     use crate::game::{Game, GameAction};
     use crate::grid::Direction;
 
@@ -76,5 +185,75 @@ mod tests {
             game.position().x(),
             game.position().y()
         )));
+    }
+
+    fn played(seed: u64) -> Game {
+        let mut game = Game::new(seed);
+        for action in [
+            GameAction::Move(Direction::East),
+            GameAction::Attack,
+            GameAction::Attack,
+            GameAction::Move(Direction::South),
+            GameAction::Wait,
+        ] {
+            let _ = game.apply(action);
+        }
+        game
+    }
+
+    #[test]
+    fn round_trip_gives_the_same_game_and_the_same_future() {
+        for seed in 0..50 {
+            let mut original = played(seed);
+            let mut loaded = from_save_str(&to_save_string(&original)).unwrap();
+            assert_eq!(loaded, original, "seed {seed}");
+            for _ in 0..20 {
+                assert_eq!(
+                    loaded.apply(GameAction::Attack),
+                    original.apply(GameAction::Attack)
+                );
+            }
+            assert_eq!(loaded, original);
+        }
+    }
+
+    #[test]
+    fn damaged_saves_are_refused() {
+        let good = to_save_string(&played(3));
+        let bad = |from: &str, to: &str| from_save_str(&good.replacen(from, to, 1));
+        assert_eq!(from_save_str("hello"), Err(LoadError::BadHeader));
+        assert_eq!(
+            bad("DNDAWA-SAVE 1", "DNDAWA-SAVE 2"),
+            Err(LoadError::BadHeader)
+        );
+        assert_eq!(
+            bad("seed=", "sneed="),
+            Err(LoadError::BadLine("sneed=3".into()))
+        );
+        let moved: String = good
+            .lines()
+            .map(|l| if l.starts_with("pos=") { "pos=9,9" } else { l })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(from_save_str(&moved), Err(LoadError::BadValue("pos")));
+        assert_eq!(
+            bad("hero_hp=", "hero_hp=99"),
+            Err(LoadError::BadValue("hero_hp"))
+        );
+        assert_eq!(bad("boss:", "dragon:"), Err(LoadError::BadValue("rooms")));
+        let without_rooms: String = good
+            .lines()
+            .filter(|l| !l.starts_with("rooms="))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(
+            from_save_str(&without_rooms),
+            Err(LoadError::Missing("rooms"))
+        );
+        let duplicated = format!("{good}turn=1\n");
+        assert!(matches!(
+            from_save_str(&duplicated),
+            Err(LoadError::BadLine(_))
+        ));
     }
 }
