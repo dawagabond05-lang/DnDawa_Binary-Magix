@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod dice;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameState {
     pub turn: u64,
