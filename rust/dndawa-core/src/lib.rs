@@ -11,15 +11,26 @@ pub enum Action {
     Wait,
 }
 
-pub fn apply_action(state: &mut GameState, action: Action) {
+/// Why an action was refused. The state is never changed when an error is returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionError {
+    /// The turn counter is already at `u64::MAX`.
+    TurnOverflow,
+}
+
+/// Apply `action` to `state`. On `Err`, `state` is left exactly as it was.
+pub fn apply_action(state: &mut GameState, action: Action) -> Result<(), ActionError> {
     match action {
-        Action::Wait => state.turn += 1,
+        Action::Wait => {
+            state.turn = state.turn.checked_add(1).ok_or(ActionError::TurnOverflow)?;
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, GameState, apply_action};
+    use super::{Action, ActionError, GameState, apply_action};
 
     #[test]
     fn wait_advances_turn_once_and_preserves_player_health() {
@@ -28,9 +39,35 @@ mod tests {
             player_health: 24,
         };
 
-        apply_action(&mut state, Action::Wait);
+        assert_eq!(apply_action(&mut state, Action::Wait), Ok(()));
 
         assert_eq!(state.turn, 8);
         assert_eq!(state.player_health, 24);
+    }
+
+    #[test]
+    fn wait_at_max_turn_returns_overflow_and_keeps_state() {
+        let mut state = GameState {
+            turn: u64::MAX,
+            player_health: 24,
+        };
+        let before = state;
+
+        assert_eq!(
+            apply_action(&mut state, Action::Wait),
+            Err(ActionError::TurnOverflow)
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn wait_one_below_max_reaches_max() {
+        let mut state = GameState {
+            turn: u64::MAX - 1,
+            player_health: 24,
+        };
+
+        assert_eq!(apply_action(&mut state, Action::Wait), Ok(()));
+        assert_eq!(state.turn, u64::MAX);
     }
 }
