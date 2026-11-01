@@ -36,6 +36,16 @@ pub enum Event {
     },
 }
 
+/// Where the game stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameStatus {
+    InProgress,
+    /// The boss is defeated.
+    Won,
+    /// The hero has fallen.
+    Lost,
+}
+
 /// Why an action was refused. The game is unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameError {
@@ -45,6 +55,8 @@ pub enum GameError {
     FoeBlocks,
     /// There is nothing to attack in this room.
     NothingToAttack,
+    /// The game has ended; no more actions are taken.
+    GameOver,
 }
 
 impl std::fmt::Display for GameError {
@@ -54,6 +66,7 @@ impl std::fmt::Display for GameError {
             Self::Move(error) => error.fmt(f),
             Self::FoeBlocks => f.write_str("a foe blocks the way out"),
             Self::NothingToAttack => f.write_str("there is nothing to attack here"),
+            Self::GameOver => f.write_str("the game is over"),
         }
     }
 }
@@ -116,8 +129,22 @@ impl Game {
         &self.dungeon
     }
 
+    /// Won once the boss room is empty, lost once the hero has 0 HP.
+    pub fn status(&self) -> GameStatus {
+        if !self.hero.is_alive() {
+            GameStatus::Lost
+        } else if self.dungeon.foe(dungeon::boss_room()).is_none() {
+            GameStatus::Won
+        } else {
+            GameStatus::InProgress
+        }
+    }
+
     /// Take one action. On `Err` the game is exactly as it was.
     pub fn apply(&mut self, action: GameAction) -> Result<Event, GameError> {
+        if self.status() != GameStatus::InProgress {
+            return Err(GameError::GameOver);
+        }
         match action {
             GameAction::Wait => {
                 self.advance_turn()?;
@@ -177,7 +204,7 @@ impl Game {
 
 #[cfg(test)]
 mod tests {
-    use super::{Event, Game, GameAction, GameError};
+    use super::{Event, Game, GameAction, GameError, GameStatus};
     use crate::ActionError;
     use crate::dungeon;
     use crate::grid::{Direction, MoveError};
@@ -262,6 +289,25 @@ mod tests {
         }
         let hp = u32::try_from(game.state.player_health).unwrap();
         assert_eq!(hp, game.hero().hp());
+    }
+
+    #[test]
+    fn defeating_the_boss_wins_and_ends_the_game() {
+        let mut game = Game::new(5);
+        assert_eq!(game.status(), GameStatus::InProgress);
+        game.dungeon.clear(dungeon::boss_room());
+        assert_eq!(game.status(), GameStatus::Won);
+        let before = game.clone();
+        assert_eq!(game.apply(GameAction::Wait), Err(GameError::GameOver));
+        assert_eq!(game, before);
+    }
+
+    #[test]
+    fn a_fallen_hero_loses() {
+        let mut game = Game::new(5);
+        game.hero.take_damage(u32::MAX);
+        assert_eq!(game.status(), GameStatus::Lost);
+        assert_eq!(game.apply(GameAction::Wait), Err(GameError::GameOver));
     }
 
     #[test]
