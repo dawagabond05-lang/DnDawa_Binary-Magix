@@ -18,6 +18,16 @@ pub enum ActionError {
     TurnOverflow,
 }
 
+impl std::fmt::Display for ActionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TurnOverflow => f.write_str("turn counter is already at its maximum"),
+        }
+    }
+}
+
+impl std::error::Error for ActionError {}
+
 /// Apply `action` to `state`. On `Err`, `state` is left exactly as it was.
 pub fn apply_action(state: &mut GameState, action: Action) -> Result<(), ActionError> {
     match action {
@@ -69,5 +79,13 @@ mod tests {
 
         assert_eq!(apply_action(&mut state, Action::Wait), Ok(()));
         assert_eq!(state.turn, u64::MAX);
+    }
+
+    #[test]
+    fn turn_overflow_is_a_displayable_std_error() {
+        let error: Box<dyn std::error::Error> = Box::new(ActionError::TurnOverflow);
+
+        assert_eq!(error.to_string(), "turn counter is already at its maximum");
+        assert!(error.source().is_none());
     }
 }
