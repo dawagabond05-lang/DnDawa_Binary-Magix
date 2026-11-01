@@ -20,37 +20,48 @@ fn main() -> ExitCode {
     };
     println!("DnDawa_Binary-Magix · seed {}", game.seed());
     println!("{}", play::HELP);
-    println!("{}", play::status_line(&game));
+    show(&game, None);
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
-        match play::parse_command(&line) {
+        let message = match play::parse_command(&line) {
             Some(Command::Act(action)) => match game.apply(action) {
-                Ok(event) => println!("{}", play::describe(&event)),
-                Err(error) => println!("Refused: {error}."),
+                Ok(event) => play::describe(&event),
+                Err(error) => format!("Refused: {error}."),
             },
             Some(Command::Save(name)) => match play::save_path(&name) {
-                Err(why) => println!("Not saved: {why}."),
+                Err(why) => format!("Not saved: {why}."),
                 Ok(path) => {
                     let written = std::fs::create_dir_all(play::SAVE_DIR)
                         .and_then(|()| std::fs::write(&path, save::to_save_string(&game)));
                     match written {
-                        Ok(()) => println!("Saved to {}.", path.display()),
-                        Err(error) => println!("Could not save: {error}."),
+                        Ok(()) => format!("Saved to {}.", path.display()),
+                        Err(error) => format!("Could not save: {error}."),
                     }
                 }
             },
-            Some(Command::Help) => println!("{}", play::HELP),
+            Some(Command::Help) => play::HELP.to_string(),
             Some(Command::Quit) => break,
-            None => println!("Unknown command. {}", play::HELP),
-        }
-        println!("{}", play::status_line(&game));
+            None => format!("Unknown command. {}", play::HELP),
+        };
+        show(&game, Some(&message));
         let _ = io::stdout().flush();
         if game.status() != GameStatus::InProgress {
             break;
         }
     }
     ExitCode::SUCCESS
+}
+
+/// Print the screen, then what just happened, then the status line.
+fn show(game: &Game, message: Option<&str>) {
+    for line in play::screen(game) {
+        println!("{line}");
+    }
+    if let Some(message) = message {
+        println!("{message}");
+    }
+    println!("{}", play::status_line(game));
 }
 
 /// Build the starting game from `--seed N` or `--load FILE` (default seed 1).

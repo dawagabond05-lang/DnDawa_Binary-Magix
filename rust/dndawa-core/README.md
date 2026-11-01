@@ -15,6 +15,10 @@ cargo run --bin dndawa-crawl -- --load saves/run1.sav
 Commands: `n` `s` `e` `w` move · `a` attack · `wait` · `save <name>` · `help` · `q` quit.
 `save run1` writes `saves/run1.sav` (the folder is git-ignored). Plain names only.
 
+After each command the screen shows the board (fog `?` over rooms not yet visited, `@`
+the hero, `B` the boss), a `◄` on the hero's row, the hero's card and, when a foe is in
+the room, its card as the target. The screen is 11 lines and fits a 97-column terminal.
+
 ## Rules
 
 - Same seed, same dungeon and same rolls (`dice::Rng`, SplitMix64, unbiased).

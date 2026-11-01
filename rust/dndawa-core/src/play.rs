@@ -1,6 +1,8 @@
 //! Terminal play: turning typed commands into actions and events into plain text.
 
 use crate::attack::HitKind;
+use crate::board::render_board;
+use crate::card::card;
 use crate::game::{Event, Game, GameAction, GameStatus};
 use crate::grid::Direction;
 
@@ -124,9 +126,38 @@ pub fn status_line(game: &Game) -> String {
     )
 }
 
+/// Key to the board tokens.
+pub const LEGEND: &str = "@ you · ? fog · · empty · B boss · r s g foes";
+
+/// The whole screen: the board on the left, a `◄` pointing at the hero's row, and
+/// the cards on the right (the hero, then the foe in the room as the target).
+/// At most 11 lines, each at most 95 characters.
+pub fn screen(game: &Game) -> Vec<String> {
+    let mut side = vec![String::new()];
+    side.extend(card("Hero", game.hero()));
+    if let Some(foe) = game.dungeon().foe(game.position()) {
+        side.push(String::new());
+        side.extend(card(&format!("Target: {}", foe.body.name), &foe.body));
+    }
+    let board = render_board(game);
+    side.resize(board.len() - 1, String::new());
+    side.push(LEGEND.to_string());
+    let hero_row = 1 + 2 * usize::from(game.position().y());
+    board
+        .into_iter()
+        .zip(side)
+        .enumerate()
+        .map(|(i, (left, right))| {
+            let gutter = if i == hero_row { " ◄ " } else { "   " };
+            format!("{left}{gutter}{right}").trim_end().to_string()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Command, describe, parse_command, save_path, status_line};
+    use super::{Command, describe, parse_command, save_path, screen, status_line};
+    use crate::dungeon;
     use crate::game::{Event, Game, GameAction};
     use crate::grid::Direction;
 
@@ -183,5 +214,32 @@ mod tests {
             }
         }
         assert!(describe(&Event::Waited).len() <= 95);
+    }
+
+    #[test]
+    fn screen_fits_and_points_at_the_hero() {
+        let game = Game::new(5);
+        let lines = screen(&game);
+        assert_eq!(lines.len(), 11);
+        for line in &lines {
+            assert!(line.chars().count() <= 95, "{line}");
+        }
+        assert!(lines[1].contains(" ◄ ┌─ Hero"), "{}", lines[1]);
+        assert_eq!(lines.iter().filter(|l| l.contains('◄')).count(), 1);
+        assert!(!lines.iter().any(|l| l.contains("Target:")));
+        assert!(lines[10].ends_with(super::LEGEND));
+    }
+
+    #[test]
+    fn screen_shows_the_foe_card_as_the_target() {
+        let mut game = Game::new(5);
+        game.position = dungeon::boss_room();
+        let lines = screen(&game);
+        assert_eq!(lines.len(), 11);
+        assert!(lines.iter().any(|l| l.contains("Target: Bone Warden")));
+        assert!(lines[9].contains("│@ B│ ◄ └"), "{}", lines[9]);
+        for line in &lines {
+            assert!(line.chars().count() <= 95, "{line}");
+        }
     }
 }
