@@ -88,6 +88,19 @@ fn parse_digits(text: &str) -> Result<u32, ParseDiceError> {
     text.parse().map_err(|_| ParseDiceError::BadNumber)
 }
 
+/// Writes the short form, such as `1d8+3`, `2d6` or `1d4-1`; it parses back the same.
+impl std::fmt::Display for Dice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}d{}", self.count, self.sides)?;
+        if self.modifier > 0 {
+            write!(f, "+{}", self.modifier)?;
+        } else if self.modifier < 0 {
+            write!(f, "{}", self.modifier)?;
+        }
+        Ok(())
+    }
+}
+
 impl Dice {
     /// Roll all dice and add the modifier. Fits easily in `i64` given the limits.
     pub fn roll(&self, rng: &mut Rng) -> i64 {
@@ -146,6 +159,15 @@ mod tests {
         assert_eq!(parse("101d6"), Err(ParseDiceError::CountOutOfRange));
         assert_eq!(parse("1d0"), Err(ParseDiceError::SidesOutOfRange));
         assert_eq!(parse("99999999999d6"), Err(ParseDiceError::BadNumber));
+    }
+
+    #[test]
+    fn displays_the_short_form_and_parses_back() {
+        for (text, shown) in [("d20", "1d20"), ("2d6+3", "2d6+3"), ("1d8-1", "1d8-1")] {
+            let dice = parse(text).unwrap();
+            assert_eq!(dice.to_string(), shown);
+            assert_eq!(parse(shown), Ok(dice));
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 pub mod attack;
 pub mod board;
+pub mod card;
 pub mod combatant;
 pub mod dice;
 pub mod dungeon;

@@ -34,8 +34,8 @@ only the start room and the hero's room count as visited.
 ## Modules
 
 `dice` · `notation` · `stats` · `combatant` · `attack` · `monsters` · `grid` · `dungeon` ·
-`game` · `save` · `board` (the grid with fog) · `play` (terminal text) · `main.rs` (the
-`dndawa-crawl` binary).
+`game` · `save` · `board` (the grid with fog) · `card` (stat cards) · `play` (terminal
+text) · `main.rs` (the `dndawa-crawl` binary).
 
 ## Content status
 
