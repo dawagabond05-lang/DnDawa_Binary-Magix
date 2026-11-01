@@ -8,6 +8,7 @@ pub mod game;
 pub mod grid;
 pub mod monsters;
 pub mod notation;
+pub mod save;
 pub mod stats;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
