@@ -29,9 +29,16 @@ fn main() -> ExitCode {
                 Ok(event) => println!("{}", play::describe(&event)),
                 Err(error) => println!("Refused: {error}."),
             },
-            Some(Command::Save(path)) => match std::fs::write(&path, save::to_save_string(&game)) {
-                Ok(()) => println!("Saved to {path}."),
-                Err(error) => println!("Could not save: {error}."),
+            Some(Command::Save(name)) => match play::save_path(&name) {
+                Err(why) => println!("Not saved: {why}."),
+                Ok(path) => {
+                    let written = std::fs::create_dir_all(play::SAVE_DIR)
+                        .and_then(|()| std::fs::write(&path, save::to_save_string(&game)));
+                    match written {
+                        Ok(()) => println!("Saved to {}.", path.display()),
+                        Err(error) => println!("Could not save: {error}."),
+                    }
+                }
             },
             Some(Command::Help) => println!("{}", play::HELP),
             Some(Command::Quit) => break,

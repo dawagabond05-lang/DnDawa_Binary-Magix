@@ -14,7 +14,27 @@ pub enum Command {
 }
 
 /// Help text, kept short for a 97-column terminal.
-pub const HELP: &str = "n s e w = move · a = attack · wait · save <file> · help · q = quit";
+pub const HELP: &str = "n s e w = move · a = attack · wait · save <name> · help · q = quit";
+
+/// Folder that holds save files (git-ignored).
+pub const SAVE_DIR: &str = "saves";
+
+/// Turn a save name into `saves/<name>.sav`. Only a plain name is accepted: no path
+/// separators, no leading dot, letters, digits, `-` and `_` only, at most 40 characters.
+pub fn save_path(name: &str) -> Result<std::path::PathBuf, &'static str> {
+    let stem = name.strip_suffix(".sav").unwrap_or(name);
+    let plain = !stem.is_empty()
+        && stem.len() <= 40
+        && !stem.starts_with('.')
+        && stem
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if plain {
+        Ok(std::path::Path::new(SAVE_DIR).join(format!("{stem}.sav")))
+    } else {
+        Err("use a plain save name: letters, digits, - or _ (max 40)")
+    }
+}
 
 /// Read one line of input. Unknown input gives `None`.
 pub fn parse_command(line: &str) -> Option<Command> {
@@ -106,7 +126,7 @@ pub fn status_line(game: &Game) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, describe, parse_command, status_line};
+    use super::{Command, describe, parse_command, save_path, status_line};
     use crate::game::{Event, Game, GameAction};
     use crate::grid::Direction;
 
@@ -124,6 +144,29 @@ mod tests {
         assert_eq!(parse_command("save"), None);
         assert_eq!(parse_command("dance"), None);
         assert_eq!(parse_command("q"), Some(Command::Quit));
+    }
+
+    #[test]
+    fn save_names_stay_inside_the_saves_folder() {
+        assert_eq!(
+            save_path("run1").unwrap(),
+            std::path::Path::new("saves/run1.sav")
+        );
+        assert_eq!(
+            save_path("run1.sav").unwrap(),
+            std::path::Path::new("saves/run1.sav")
+        );
+        for bad in [
+            "",
+            "../x",
+            "/etc/passwd",
+            "a/b",
+            ".hidden",
+            "sp ace",
+            &"x".repeat(41),
+        ] {
+            assert!(save_path(bad).is_err(), "{bad:?} should be refused");
+        }
     }
 
     #[test]
