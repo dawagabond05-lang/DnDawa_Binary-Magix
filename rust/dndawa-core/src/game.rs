@@ -1,6 +1,7 @@
 //! A whole game: the hero, where they stand, the dungeon and the turn counter.
 //! Rule: a refused action changes nothing, not even the turn counter.
 
+use crate::attack::{AttackOutcome, attack};
 use crate::combatant::Combatant;
 use crate::dice::Rng;
 use crate::dungeon::{self, Dungeon};
@@ -13,6 +14,8 @@ use crate::{Action, ActionError, GameState, apply_action};
 pub enum GameAction {
     Wait,
     Move(Direction),
+    /// Attack the foe in the hero's room.
+    Attack,
 }
 
 /// What happened on a turn.
@@ -24,6 +27,13 @@ pub enum Event {
         to: Position,
         foe: Option<MonsterKind>,
     },
+    /// The hero attacked; `counter` is the foe's reply if it survived.
+    Fought {
+        foe: MonsterKind,
+        hero_attack: AttackOutcome,
+        counter: Option<AttackOutcome>,
+        foe_defeated: bool,
+    },
 }
 
 /// Why an action was refused. The game is unchanged.
@@ -33,6 +43,8 @@ pub enum GameError {
     Move(MoveError),
     /// A living foe in this room blocks the way out.
     FoeBlocks,
+    /// There is nothing to attack in this room.
+    NothingToAttack,
 }
 
 impl std::fmt::Display for GameError {
@@ -41,6 +53,7 @@ impl std::fmt::Display for GameError {
             Self::Turn(error) => error.fmt(f),
             Self::Move(error) => error.fmt(f),
             Self::FoeBlocks => f.write_str("a foe blocks the way out"),
+            Self::NothingToAttack => f.write_str("there is nothing to attack here"),
         }
     }
 }
@@ -122,7 +135,38 @@ impl Game {
                     foe: self.dungeon.foe(to).map(|foe| foe.kind),
                 })
             }
+            GameAction::Attack => self.attack(),
         }
+    }
+
+    /// Hero strikes the foe in the room; a surviving foe strikes back.
+    fn attack(&mut self) -> Result<Event, GameError> {
+        let target_ac = match self.dungeon.foe(self.position) {
+            Some(foe) => foe.body.armor_class,
+            None => return Err(GameError::NothingToAttack),
+        };
+        // Count the turn before rolling, so a refused turn consumes no dice.
+        self.advance_turn()?;
+        let hero_attack = attack(&self.hero, target_ac, &mut self.rng);
+        let foe = self.dungeon.foe_mut(self.position).expect("checked above");
+        let kind = foe.kind;
+        foe.body.take_damage(hero_attack.damage);
+        let foe_defeated = !foe.body.is_alive();
+        let counter = if foe_defeated {
+            self.dungeon.clear(self.position);
+            None
+        } else {
+            let strike = attack(&foe.body, self.hero.armor_class, &mut self.rng);
+            self.hero.take_damage(strike.damage);
+            self.state.player_health = i32::try_from(self.hero.hp()).unwrap_or(i32::MAX);
+            Some(strike)
+        };
+        Ok(Event::Fought {
+            foe: kind,
+            hero_attack,
+            counter,
+            foe_defeated,
+        })
     }
 
     /// Count the turn. Fails (changing nothing) at `u64::MAX`.
@@ -184,6 +228,40 @@ mod tests {
             Err(GameError::FoeBlocks)
         );
         assert_eq!(game, before);
+    }
+
+    #[test]
+    fn attacking_an_empty_room_changes_nothing() {
+        let mut game = Game::new(5);
+        let before = game.clone();
+        assert_eq!(
+            game.apply(GameAction::Attack),
+            Err(GameError::NothingToAttack)
+        );
+        assert_eq!(game, before);
+    }
+
+    #[test]
+    fn fighting_ends_with_the_foe_cleared_or_the_hero_hurt() {
+        let mut game = Game::new(5);
+        game.position = dungeon::boss_room();
+        let mut fights = 0;
+        while game.dungeon().foe(game.position()).is_some() && game.hero().is_alive() {
+            match game.apply(GameAction::Attack).unwrap() {
+                Event::Fought {
+                    foe_defeated,
+                    counter,
+                    ..
+                } => {
+                    assert_eq!(foe_defeated, counter.is_none());
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            fights += 1;
+            assert!(fights < 1000);
+        }
+        let hp = u32::try_from(game.state.player_health).unwrap();
+        assert_eq!(hp, game.hero().hp());
     }
 
     #[test]
