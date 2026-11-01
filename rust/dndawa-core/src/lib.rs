@@ -3,6 +3,7 @@
 pub mod attack;
 pub mod combatant;
 pub mod dice;
+pub mod grid;
 pub mod monsters;
 pub mod notation;
 pub mod stats;
