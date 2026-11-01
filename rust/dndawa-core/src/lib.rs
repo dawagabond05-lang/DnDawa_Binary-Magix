@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod attack;
 pub mod combatant;
 pub mod dice;
 pub mod notation;
