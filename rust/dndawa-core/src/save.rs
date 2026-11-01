@@ -12,7 +12,7 @@
 
 use crate::GameState;
 use crate::dice::Rng;
-use crate::dungeon::{Dungeon, Foe};
+use crate::dungeon::{self, Dungeon, Foe};
 use crate::game::{Game, new_hero};
 use crate::grid::{Position, SIZE};
 use crate::monsters::MonsterKind;
@@ -54,6 +54,8 @@ pub enum LoadError {
     Missing(&'static str),
     /// A value is malformed or out of range.
     BadValue(&'static str),
+    /// Values are each valid but do not fit together (e.g. a boss outside its room).
+    Inconsistent(&'static str),
 }
 
 impl std::fmt::Display for LoadError {
@@ -63,6 +65,7 @@ impl std::fmt::Display for LoadError {
             Self::BadLine(line) => write!(f, "unexpected line: {line:?}"),
             Self::Missing(key) => write!(f, "missing {key}"),
             Self::BadValue(key) => write!(f, "invalid value for {key}"),
+            Self::Inconsistent(what) => write!(f, "inconsistent save: {what}"),
         }
     }
 }
@@ -116,6 +119,7 @@ pub fn from_save_str(text: &str) -> Result<Game, LoadError> {
     if rooms.len() != usize::from(SIZE) * usize::from(SIZE) {
         return Err(LoadError::BadValue("rooms"));
     }
+    check_layout(&rooms)?;
     let dungeon = Dungeon::from_rooms(rooms).ok_or(LoadError::BadValue("rooms"))?;
 
     Ok(Game {
@@ -129,6 +133,26 @@ pub fn from_save_str(text: &str) -> Result<Game, LoadError> {
         dungeon,
         rng: Rng::new(rng_state),
     })
+}
+
+/// Rooms must fit the dungeon's fixed layout: the start room is empty and the boss
+/// is either in its own room or already defeated.
+fn check_layout(rooms: &[Option<Foe>]) -> Result<(), LoadError> {
+    let index = |at: Position| usize::from(at.y()) * usize::from(SIZE) + usize::from(at.x());
+    let (start, boss_room) = (index(dungeon::start()), index(dungeon::boss_room()));
+    if rooms[start].is_some() {
+        return Err(LoadError::Inconsistent("start room must be empty"));
+    }
+    for (i, room) in rooms.iter().enumerate() {
+        let is_boss = matches!(room, Some(foe) if foe.kind == MonsterKind::BoneWarden);
+        if is_boss && i != boss_room {
+            return Err(LoadError::Inconsistent("boss outside its room"));
+        }
+        if !is_boss && room.is_some() && i == boss_room {
+            return Err(LoadError::Inconsistent("boss room holds another monster"));
+        }
+    }
+    Ok(())
 }
 
 /// `-` for an empty room, or `code:hp` with 1 <= hp <= that monster's max HP.
@@ -255,5 +279,51 @@ mod tests {
             from_save_str(&duplicated),
             Err(LoadError::BadLine(_))
         ));
+    }
+
+    fn with_rooms(good: &str, rooms: &str) -> String {
+        good.lines()
+            .map(|l| if l.starts_with("rooms=") { rooms } else { l })
+            .map(|l| format!("{l}\n"))
+            .collect()
+    }
+
+    #[test]
+    fn layout_that_cannot_happen_is_refused() {
+        let good = to_save_string(&Game::new(1));
+        let mut cells = vec!["-"; 25];
+        cells[24] = "boss:45";
+        let valid = format!("rooms={}", cells.join(","));
+        assert!(from_save_str(&with_rooms(&good, &valid)).is_ok());
+
+        cells[3] = "boss:45";
+        let two_bosses = format!("rooms={}", cells.join(","));
+        assert_eq!(
+            from_save_str(&with_rooms(&good, &two_bosses)),
+            Err(LoadError::Inconsistent("boss outside its room"))
+        );
+
+        let mut cells = vec!["-"; 25];
+        cells[24] = "rat:7";
+        let wrong_boss = format!("rooms={}", cells.join(","));
+        assert_eq!(
+            from_save_str(&with_rooms(&good, &wrong_boss)),
+            Err(LoadError::Inconsistent("boss room holds another monster"))
+        );
+
+        let mut cells = vec!["-"; 25];
+        cells[0] = "goblin:7";
+        let busy_start = format!("rooms={}", cells.join(","));
+        assert_eq!(
+            from_save_str(&with_rooms(&good, &busy_start)),
+            Err(LoadError::Inconsistent("start room must be empty"))
+        );
+    }
+
+    #[test]
+    fn defeated_boss_still_loads() {
+        let good = to_save_string(&Game::new(1));
+        let cleared = format!("rooms={}", vec!["-"; 25].join(","));
+        assert!(from_save_str(&with_rooms(&good, &cleared)).is_ok());
     }
 }
