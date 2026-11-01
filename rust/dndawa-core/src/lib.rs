@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod combatant;
 pub mod dice;
 pub mod notation;
 pub mod stats;
