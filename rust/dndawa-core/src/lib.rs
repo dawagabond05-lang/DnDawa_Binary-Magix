@@ -2,6 +2,7 @@
 
 pub mod dice;
 pub mod notation;
+pub mod stats;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameState {
