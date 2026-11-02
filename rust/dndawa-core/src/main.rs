@@ -23,8 +23,22 @@ fn main() -> ExitCode {
     let mut journal = play::Journal::default();
     show(&game, &journal);
     let stdin = io::stdin();
+    let mut input_failed = false;
     for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
+        let line = match line {
+            Ok(line) => line,
+            // A line that is not UTF-8 is skipped; the game goes on.
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                journal.push("Unreadable input (not UTF-8): line skipped.");
+                show(&game, &journal);
+                continue;
+            }
+            Err(error) => {
+                eprintln!("dndawa-crawl: cannot read input: {error}");
+                input_failed = true;
+                break;
+            }
+        };
         let message = match play::parse_command(&line) {
             Some(Command::Act(action)) => match game.apply(action) {
                 Ok(event) => play::describe(&event),
@@ -52,7 +66,15 @@ fn main() -> ExitCode {
             break;
         }
     }
-    ExitCode::SUCCESS
+    // The game ended, or the player quit with `q` or by closing the input (Ctrl-D).
+    for line in play::summary(&game) {
+        println!("{line}");
+    }
+    if input_failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 /// Print the screen, then the journal (last lines, newest last), then the status line.

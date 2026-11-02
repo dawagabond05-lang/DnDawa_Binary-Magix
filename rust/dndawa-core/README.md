@@ -19,6 +19,9 @@ After each command the screen shows the board (fog `?` over rooms not yet visite
 the hero, `B` the boss), a `◄` on the hero's row, the hero's card and, when a foe is in
 the room, its card as the target. Under it, a journal shows the last three events
 (newest marked `»`). Each turn prints at most 15 lines and fits a 97-column terminal.
+When the game ends, or when you quit (`q`, or closing the input with Ctrl-D), two lines
+sum it up: the outcome, turns, rooms explored, hit points and foes left. A line of input
+that is not UTF-8 is skipped with a message.
 
 ## Rules
 

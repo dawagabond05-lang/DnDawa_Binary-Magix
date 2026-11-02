@@ -4,7 +4,7 @@ use crate::attack::HitKind;
 use crate::board::render_board;
 use crate::card::card;
 use crate::game::{Event, Game, GameAction, GameStatus};
-use crate::grid::Direction;
+use crate::grid::{Direction, Position, SIZE};
 
 /// One typed command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +126,31 @@ pub fn status_line(game: &Game) -> String {
     )
 }
 
+/// Two lines printed when the game ends or the player quits (`q` or end of input):
+/// the outcome, then turns, rooms explored, hit points and foes still in the dungeon.
+pub fn summary(game: &Game) -> [String; 2] {
+    let outcome = match game.status() {
+        GameStatus::Won => "VICTORY: the Bone Warden is defeated.",
+        GameStatus::Lost => "DEFEAT: the hero has fallen.",
+        GameStatus::InProgress => "The game is left in progress.",
+    };
+    let explored = (0..SIZE)
+        .flat_map(|y| (0..SIZE).filter_map(move |x| Position::new(x, y)))
+        .filter(|&at| game.visited(at))
+        .count();
+    let foes_left = game.dungeon().rooms().iter().flatten().count();
+    [
+        outcome.to_string(),
+        format!(
+            "turns {} · rooms explored {explored}/{} · HP {}/{} · foes left {foes_left}",
+            game.turn(),
+            usize::from(SIZE) * usize::from(SIZE),
+            game.hero().hp(),
+            game.hero().max_hp()
+        ),
+    ]
+}
+
 /// Lines kept in the journal shown under the screen.
 pub const JOURNAL_LINES: usize = 3;
 
@@ -189,7 +214,9 @@ pub fn screen(game: &Game) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Journal, describe, parse_command, save_path, screen, status_line};
+    use super::{
+        Command, Journal, describe, parse_command, save_path, screen, status_line, summary,
+    };
     use crate::dungeon;
     use crate::game::{Event, Game, GameAction};
     use crate::grid::Direction;
@@ -247,6 +274,25 @@ mod tests {
             }
         }
         assert!(describe(&Event::Waited).len() <= 95);
+    }
+
+    #[test]
+    fn summary_reports_outcome_and_exploration() {
+        let mut game = Game::new(5);
+        let foes = game.dungeon().rooms().iter().flatten().count();
+        let lines = summary(&game);
+        assert_eq!(lines[0], "The game is left in progress.");
+        assert_eq!(
+            lines[1],
+            format!("turns 0 · rooms explored 1/25 · HP 12/12 · foes left {foes}")
+        );
+        game.dungeon.clear(dungeon::boss_room());
+        assert!(summary(&game)[0].starts_with("VICTORY"));
+        game.hero.take_damage(u32::MAX);
+        assert!(summary(&game)[0].starts_with("DEFEAT"));
+        for line in summary(&game) {
+            assert!(line.chars().count() <= 95, "{line}");
+        }
     }
 
     #[test]
