@@ -3,6 +3,7 @@
 use crate::attack::HitKind;
 use crate::board::render_board;
 use crate::card::card;
+use crate::color;
 use crate::game::{Event, Game, GameAction, GameStatus};
 use crate::grid::{Direction, Position, SIZE};
 
@@ -191,6 +192,17 @@ pub const LEGEND: &str = "@ you · ? fog · · empty · B boss · r s g foes";
 /// the cards on the right (the hero, then the foe in the room as the target).
 /// At most 11 lines, each at most 95 characters.
 pub fn screen(game: &Game) -> Vec<String> {
+    compose(game, false)
+}
+
+/// The same screen in colour. Each zone is painted on its own before the lines are
+/// joined: the board its tokens, the cards only their hit-point bar, the pointer itself.
+/// Removing the colour codes gives back exactly [`screen`].
+pub fn screen_coloured(game: &Game) -> Vec<String> {
+    compose(game, true)
+}
+
+fn compose(game: &Game, colour: bool) -> Vec<String> {
     let mut side = vec![String::new()];
     side.extend(card("Hero", game.hero()));
     if let Some(foe) = game.dungeon().foe(game.position()) {
@@ -206,7 +218,20 @@ pub fn screen(game: &Game) -> Vec<String> {
         .zip(side)
         .enumerate()
         .map(|(i, (left, right))| {
-            let gutter = if i == hero_row { " ◄ " } else { "   " };
+            let (left, mark, right) = if colour {
+                (
+                    color::paint_board(&left),
+                    color::pointer(),
+                    color::paint_side(&right),
+                )
+            } else {
+                (left, "◄".to_string(), right)
+            };
+            let gutter = if i == hero_row {
+                format!(" {mark} ")
+            } else {
+                "   ".to_string()
+            };
             format!("{left}{gutter}{right}").trim_end().to_string()
         })
         .collect()
@@ -214,9 +239,9 @@ pub fn screen(game: &Game) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Command, Journal, describe, parse_command, save_path, screen, status_line, summary,
-    };
+    use super::{Command, Journal, describe, parse_command, save_path};
+    use super::{screen, screen_coloured, status_line, summary};
+    use crate::color::strip;
     use crate::dungeon;
     use crate::game::{Event, Game, GameAction};
     use crate::grid::Direction;
@@ -293,6 +318,54 @@ mod tests {
         for line in summary(&game) {
             assert!(line.chars().count() <= 95, "{line}");
         }
+    }
+
+    /// (plain column, character) of every character that carries a colour code.
+    fn painted(line: &str) -> Vec<(usize, char)> {
+        let mut out = Vec::new();
+        let (mut column, mut chars, mut coloured) = (0, line.chars(), false);
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                let code: String = chars.by_ref().take_while(|&e| e != 'm').collect();
+                coloured = code != "[0";
+            } else {
+                if coloured {
+                    out.push((column, c));
+                }
+                column += 1;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn coloured_screen_is_the_plain_screen_plus_colour_by_zone() {
+        for at_boss in [false, true] {
+            let mut game = Game::new(5);
+            if at_boss {
+                game.position = dungeon::boss_room();
+            }
+            let plain = screen(&game);
+            let coloured = screen_coloured(&game);
+            assert_eq!(coloured.len(), plain.len());
+            for (c, p) in coloured.iter().zip(&plain) {
+                assert_eq!(&strip(c), p);
+                for (column, ch) in painted(c) {
+                    assert!(
+                        column < 21 || !ch.is_alphabetic(),
+                        "letter {ch:?} coloured at column {column}: {p}"
+                    );
+                }
+            }
+        }
+        let mut game = Game::new(5);
+        game.position = dungeon::boss_room();
+        let lines = screen_coloured(&game);
+        assert!(lines[9].contains("\x1b[1;33m@\x1b[0m \x1b[1;31mB\x1b[0m"));
+        assert!(lines[9].contains("\x1b[1;33m◄\x1b[0m"));
+        assert!(lines.iter().any(|l| l.contains("\x1b[32m█\x1b[0m")));
+        assert!(lines.iter().any(|l| l.contains("Target: Bone Warden")));
+        assert!(lines[10].ends_with(super::LEGEND), "the legend stays plain");
     }
 
     #[test]

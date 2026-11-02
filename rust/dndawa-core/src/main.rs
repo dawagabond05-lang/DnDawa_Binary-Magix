@@ -1,6 +1,6 @@
 //! `dndawa-crawl`: play the dungeon in a terminal.
 //!
-//! Usage: `dndawa-crawl [--seed N] [--load FILE]`
+//! Usage: `dndawa-crawl [--seed N | --load FILE] [--color]`
 
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
@@ -11,6 +11,9 @@ use dndawa_core::save;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Colour only on request. The game never colours by default, so NO_COLOR has nothing
+    // to turn off, and an explicit --color wins (no-color.org: per-command flags override it).
+    let (colour, args) = take_colour_flag(&args);
     let mut game = match start(&args) {
         Ok(game) => game,
         Err(message) => {
@@ -21,7 +24,7 @@ fn main() -> ExitCode {
     println!("DnDawa_Binary-Magix · seed {}", game.seed());
     println!("{}", play::HELP);
     let mut journal = play::Journal::default();
-    show(&game, &journal);
+    show(&game, &journal, colour);
     let stdin = io::stdin();
     let mut input_failed = false;
     for line in stdin.lock().lines() {
@@ -30,7 +33,7 @@ fn main() -> ExitCode {
             // A line that is not UTF-8 is skipped; the game goes on.
             Err(error) if error.kind() == io::ErrorKind::InvalidData => {
                 journal.push("Unreadable input (not UTF-8): line skipped.");
-                show(&game, &journal);
+                show(&game, &journal, colour);
                 continue;
             }
             Err(error) => {
@@ -60,7 +63,7 @@ fn main() -> ExitCode {
             None => format!("Unknown command. {}", play::HELP),
         };
         journal.push(message);
-        show(&game, &journal);
+        show(&game, &journal, colour);
         let _ = io::stdout().flush();
         if game.status() != GameStatus::InProgress {
             break;
@@ -77,9 +80,33 @@ fn main() -> ExitCode {
     }
 }
 
+/// Take out `--color` flags, reading the arguments in order: the value that follows
+/// `--seed` or `--load` is never a flag, so a save file may even be named `--color`.
+fn take_colour_flag(args: &[String]) -> (bool, Vec<String>) {
+    let mut colour = false;
+    let mut rest = Vec::with_capacity(args.len());
+    let mut items = args.iter();
+    while let Some(arg) = items.next() {
+        if arg == "--seed" || arg == "--load" {
+            rest.push(arg.clone());
+            rest.extend(items.next().cloned());
+        } else if arg == "--color" {
+            colour = true;
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+    (colour, rest)
+}
+
 /// Print the screen, then the journal (last lines, newest last), then the status line.
-fn show(game: &Game, journal: &play::Journal) {
-    for line in play::screen(game) {
+fn show(game: &Game, journal: &play::Journal, colour: bool) {
+    let lines = if colour {
+        play::screen_coloured(game)
+    } else {
+        play::screen(game)
+    };
+    for line in lines {
         println!("{line}");
     }
     for line in journal.lines() {
@@ -100,6 +127,39 @@ fn start(args: &[String]) -> Result<Game, String> {
             let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
             save::from_save_str(&text).map_err(|e| format!("{path}: {e}"))
         }
-        _ => Err("usage: dndawa-crawl [--seed N] [--load FILE]".to_string()),
+        _ => Err("usage: dndawa-crawl [--seed N | --load FILE] [--color]".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::take_colour_flag;
+
+    fn split(args: &[&str]) -> (bool, Vec<String>) {
+        let owned: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        take_colour_flag(&owned)
+    }
+
+    #[test]
+    fn color_is_a_flag_anywhere_but_never_the_value_of_load_or_seed() {
+        assert_eq!(split(&[]), (false, vec![]));
+        assert_eq!(split(&["--color"]), (true, vec![]));
+        assert_eq!(
+            split(&["--color", "--seed", "5"]),
+            (true, vec!["--seed".into(), "5".into()])
+        );
+        assert_eq!(
+            split(&["--seed", "5", "--color"]),
+            (true, vec!["--seed".into(), "5".into()])
+        );
+        assert_eq!(
+            split(&["--load", "--color"]),
+            (false, vec!["--load".into(), "--color".into()])
+        );
+        assert_eq!(
+            split(&["--load", "--color", "--color"]),
+            (true, vec!["--load".into(), "--color".into()])
+        );
+        assert_eq!(split(&["--load"]), (false, vec!["--load".into()]));
     }
 }

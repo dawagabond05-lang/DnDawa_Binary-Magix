@@ -10,6 +10,7 @@ save/load. No dependencies outside the Rust standard library; `unsafe` is forbid
 cargo test
 cargo run --bin dndawa-crawl -- --seed 5
 cargo run --bin dndawa-crawl -- --load saves/run1.sav
+cargo run --bin dndawa-crawl -- --seed 5 --color
 ```
 
 Commands: `n` `s` `e` `w` move · `a` attack · `wait` · `save <name>` · `help` · `q` quit.
@@ -22,6 +23,10 @@ the room, its card as the target. Under it, a journal shows the last three event
 When the game ends, or when you quit (`q`, or closing the input with Ctrl-D), two lines
 sum it up: the outcome, turns, rooms explored, hit points and foes left. A line of input
 that is not UTF-8 is skipped with a message.
+
+`--color` adds terminal colours (hero yellow, boss red, foes magenta, HP bar green). The
+game never colours by default, so `NO_COLOR` changes nothing, and an explicit `--color`
+is honoured even when `NO_COLOR` is set, as no-color.org recommends for per-command flags.
 
 ## Rules
 
@@ -42,8 +47,8 @@ only the start room and the hero's room count as visited.
 ## Modules
 
 `dice` · `notation` · `stats` · `combatant` · `attack` · `monsters` · `grid` · `dungeon` ·
-`game` · `save` · `board` (the grid with fog) · `card` (stat cards) · `play` (terminal
-text) · `main.rs` (the `dndawa-crawl` binary).
+`game` · `save` · `board` (the grid with fog) · `card` (stat cards) · `color` (optional
+ANSI colours) · `play` (terminal text) · `main.rs` (the `dndawa-crawl` binary).
 
 ## Content status
 

@@ -3,6 +3,7 @@
 pub mod attack;
 pub mod board;
 pub mod card;
+pub mod color;
 pub mod combatant;
 pub mod dice;
 pub mod dungeon;
